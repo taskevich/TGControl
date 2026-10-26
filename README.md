@@ -29,7 +29,6 @@ Compose.
 2. Скопируйте настройки и заполните их:
    ```bash
    cp .env.example .env
-   # укажите SECRET_KEY, ADMIN_PASSWORD, TG_API_ID, TG_API_HASH
    ```
 3. Запустите:
    ```bash

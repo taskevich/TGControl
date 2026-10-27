@@ -127,6 +127,15 @@ class SetPasswordAllIn(SetPasswordIn):
     account_ids: list[int] = Field(default_factory=list)
 
 
+class AccountIdsIn(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+
+
+class ResetSessionsOut(BaseModel):
+    terminated: int
+    detail: str
+
+
 class SetPasswordResult(BaseModel):
     account_id: int
     label: str

@@ -1,8 +1,9 @@
 import asyncio
+import re
 
 from app.application.dto import AccountView, PasswordResult, TgProfile
 from app.application.ports.repositories import UnitOfWork, UnitOfWorkFactory
-from app.application.ports.services import Cipher
+from app.application.ports.services import Cipher, SessionFileBuilder
 from app.application.services.proxies import ProxyRegistry
 from app.application.services.telegram_access import AccountClients
 from app.domain.entities import Account, AccountStatus
@@ -15,6 +16,13 @@ from app.domain.errors import (
 from app.domain.values import check_new_account_password
 
 CHECK_CONCURRENCY = 5
+FILENAME_UNSAFE = re.compile("[\\\\/:*?\"<>|\x00-\x1f]")
+
+
+def sessions_detail(terminated: int) -> str:
+    if not terminated:
+        return "Других сеансов нет"
+    return f"Завершено других сеансов: {terminated}"
 
 
 class AccountRegistrar:
@@ -82,11 +90,13 @@ class Accounts:
         clients: AccountClients,
         cipher: Cipher,
         proxies: ProxyRegistry,
+        session_files: SessionFileBuilder,
     ):
         self._uow = uow
         self._clients = clients
         self._cipher = cipher
         self._proxies = proxies
+        self._session_files = session_files
 
     async def all(self, status: str | None = None) -> list[AccountView]:
         async with self._uow() as uow:
@@ -129,6 +139,36 @@ class Accounts:
             if reconnect:
                 await self._clients.drop(acc.id)
             return self._clients.view(acc)
+
+    def _session_file_name(self, acc: Account) -> str:
+        parts = [(acc.phone or "").lstrip("+") or str(acc.tg_id or acc.id)]
+        if acc.twofa_enc:
+            parts.append(self._cipher.decrypt(acc.twofa_enc))
+        return FILENAME_UNSAFE.sub("_", "_".join(parts)) + ".session"
+
+    async def session_file(self, account_id: int) -> tuple[str, bytes]:
+        async with self._uow() as uow:
+            acc = await self._clients.account(uow, account_id)
+            data = self._session_files.build(self._cipher.decrypt(acc.session_enc))
+            return self._session_file_name(acc), data
+
+    async def session_archive(self, status: str | None = None) -> bytes:
+        async with self._uow() as uow:
+            accounts = await uow.accounts.all(status)
+        files, names = [], set()
+        for acc in accounts:
+            if not acc.session_enc:
+                continue
+            name = self._session_file_name(acc)
+            if name in names:
+                name = name.removesuffix(".session") + f"_{acc.id}.session"
+            names.add(name)
+            files.append(
+                (name, self._session_files.build(self._cipher.decrypt(acc.session_enc)))
+            )
+        if not files:
+            raise DomainError("Нет аккаунтов с сохранённой сессией")
+        return self._session_files.archive(files)
 
     async def delete(self, account_id: int, logout: bool = False) -> None:
         async with self._uow() as uow:
@@ -213,6 +253,34 @@ class Accounts:
             acc = await self._clients.account(uow, account_id)
             await self._set_password(uow, acc, password, hint)
             return self._clients.view(acc)
+
+    async def _reset_sessions(self, uow: UnitOfWork, acc: Account) -> int:
+        tg = await self._clients.session(uow, acc)
+        async with self._clients.guard(uow, acc):
+            return await tg.reset_other_sessions()
+
+    async def reset_sessions(self, account_id: int) -> int:
+        async with self._uow() as uow:
+            acc = await self._clients.account(uow, account_id)
+            return await self._reset_sessions(uow, acc)
+
+    async def reset_sessions_many(self, account_ids: list[int]) -> list[PasswordResult]:
+        async with self._uow() as uow:
+            ids = await uow.accounts.usable_ids(account_ids or None)
+        if not ids:
+            raise DomainError("Нет подходящих аккаунтов (включённых и активных)")
+        sem = asyncio.Semaphore(CHECK_CONCURRENCY)
+
+        async def one(aid: int) -> PasswordResult:
+            async with sem, self._uow() as uow:
+                acc = await uow.accounts.get(aid)
+                try:
+                    n = await self._reset_sessions(uow, acc)
+                except DomainError as e:
+                    return PasswordResult(aid, acc.label, "error", str(e))
+                return PasswordResult(aid, acc.label, "ok", sessions_detail(n))
+
+        return list(await asyncio.gather(*(one(i) for i in ids)))
 
     async def set_password_many(
         self, account_ids: list[int], password: str, hint: str = ""

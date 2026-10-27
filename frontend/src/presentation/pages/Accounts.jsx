@@ -17,6 +17,7 @@ import {fmtDate} from '../../domain/format.js'
 import {readAllSummary} from '../../domain/chats.js'
 import AddAccountModal from './AddAccountModal.jsx'
 import {proxyLabel} from '../../domain/proxies.js'
+import {saveFile} from '../download.js'
 
 export default function Accounts() {
     const toast = useToast()
@@ -28,6 +29,9 @@ export default function Accounts() {
     const [checkingAll, setCheckingAll] = useState(false)
     const [readingAll, setReadingAll] = useState(false)
     const [settingPassword, setSettingPassword] = useState(false)
+    const [resettingAll, setResettingAll] = useState(false)
+    const [resetResults, setResetResults] = useState(null)
+    const [downloadingAll, setDownloadingAll] = useState(false)
     const {data, loading, reload, setData} = useQuery(() => svc.accounts.list(status), [status])
 
     const replace = (acc) => setData((xs) => xs.map((x) => (x.id === acc.id ? acc : x)))
@@ -87,6 +91,33 @@ export default function Accounts() {
         }
     }
 
+    const resetSessionsAll = async () => {
+        if (!window.confirm('Завершить у всех включённых активных аккаунтов все сеансы в Telegram, кроме сеанса панели?')) return
+        setResettingAll(true)
+        try {
+            const res = await svc.accounts.resetSessionsAll()
+            setResetResults(res)
+            const ok = res.filter((r) => r.status === 'ok').length
+            toast(`Сеансы завершены: ${ok} из ${res.length}`, ok === res.length ? 'success' : 'error')
+            reload(true)
+        } catch (e) {
+            toast(e.message, 'error')
+        } finally {
+            setResettingAll(false)
+        }
+    }
+
+    const downloadAll = async () => {
+        setDownloadingAll(true)
+        try {
+            saveFile(await svc.accounts.sessionArchive(status))
+        } catch (e) {
+            toast(e.message, 'error')
+        } finally {
+            setDownloadingAll(false)
+        }
+    }
+
     const needle = q.trim().toLowerCase()
     const rows = (data || []).filter((a) => matchesAccount(a, needle))
 
@@ -102,6 +133,14 @@ export default function Accounts() {
                 </button>
                 <button className="btn btn-ghost" onClick={() => setSettingPassword(true)}>
                     <Icon name="key"/> Пароль 2FA всем
+                </button>
+                <button className="btn btn-ghost" onClick={resetSessionsAll} disabled={resettingAll}
+                        title="Выход со всех других устройств, кроме сеанса панели">
+                    {resettingAll ? <Spinner/> : <Icon name="logout"/>} Завершить другие сеансы
+                </button>
+                <button className="btn btn-ghost" onClick={downloadAll} disabled={downloadingAll}
+                        title="ZIP с файлами телефон_пароль2FA.session (с учётом фильтра по статусу)">
+                    {downloadingAll ? <Spinner/> : <Icon name="file"/>} Скачать все сессии
                 </button>
                 <button className="btn btn-primary" onClick={() => setAdding(true)}>
                     <Icon name="plus"/> Добавить аккаунт
@@ -202,6 +241,12 @@ export default function Accounts() {
                 />
             )}
 
+            {resetResults && (
+                <Modal title="Завершение других сеансов" onClose={() => setResetResults(null)}>
+                    <ResultsTable results={resetResults}/>
+                </Modal>
+            )}
+
             {adding && (
                 <AddAccountModal
                     onClose={() => setAdding(false)}
@@ -252,19 +297,23 @@ function SetPasswordAllModal({onClose, onDone}) {
                 <button className="btn btn-primary" disabled={busy || password.length < NEW_PASSWORD_MIN_LENGTH}>{busy ?
                     <Spinner/> : 'Установить'}</button>
             </form>
-            {results && (
-                <table className="table">
-                    <tbody>
-                    {results.map((r) => (
-                        <tr key={r.account_id}>
-                            <td>{r.label}</td>
-                            <td><Badge status={r.status === 'ok' ? 'ok' : 'error'}/></td>
-                            <td className="small">{r.detail}</td>
-                        </tr>
-                    ))}
-                    </tbody>
-                </table>
-            )}
+            {results && <ResultsTable results={results}/>}
         </Modal>
+    )
+}
+
+function ResultsTable({results}) {
+    return (
+        <table className="table">
+            <tbody>
+            {results.map((r) => (
+                <tr key={r.account_id}>
+                    <td>{r.label}</td>
+                    <td><Badge status={r.status === 'ok' ? 'ok' : 'error'}/></td>
+                    <td className="small">{r.detail}</td>
+                </tr>
+            ))}
+            </tbody>
+        </table>
     )
 }

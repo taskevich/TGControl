@@ -17,8 +17,14 @@ function errorMessage(data, fallback) {
     return msg || fallback || 'Ошибка запроса'
 }
 
+function fileName(res, fallback) {
+    const header = res.headers.get('Content-Disposition') || ''
+    const m = header.match(/filename\*=UTF-8''([^;]+)/i)
+    return m ? decodeURIComponent(m[1]) : fallback
+}
+
 export function createHttpClient({baseUrl, session}) {
-    async function request(path, {method = 'GET', body, form, params} = {}) {
+    async function request(path, {method = 'GET', body, form, params, file = false} = {}) {
         let url = `${baseUrl}/api${path}`
         if (params) {
             const qs = new URLSearchParams()
@@ -45,6 +51,7 @@ export function createHttpClient({baseUrl, session}) {
             throw new ServiceError('Сервер недоступен', 'unavailable')
         }
         if (res.status === 401 && !path.startsWith('/auth/login')) session.expire()
+        if (file && res.ok) return {blob: await res.blob(), name: fileName(res, 'download')}
 
         const text = await res.text()
         let data = null
@@ -59,6 +66,7 @@ export function createHttpClient({baseUrl, session}) {
 
     return {
         get: (path, params) => request(path, {params}),
+        file: (path, params) => request(path, {params, file: true}),
         post: (path, body, params) => request(path, {method: 'POST', body, params}),
         postForm: (path, form) => request(path, {method: 'POST', form}),
         patch: (path, body) => request(path, {method: 'PATCH', body}),

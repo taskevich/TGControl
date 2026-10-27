@@ -66,6 +66,11 @@ class ProxyChecker(Protocol):
     ) -> tuple[bool, int | None, str | None]: ...
 
 
+class SessionFileBuilder(Protocol):
+    def build(self, session: str) -> bytes: ...
+    def archive(self, files: list[tuple[str, bytes]]) -> bytes: ...
+
+
 class SessionFileParser(Protocol):
     def parse(
         self, files: list[tuple[str, bytes]], string_sessions: str = ""

@@ -23,7 +23,10 @@ from app.infrastructure.s3_storage import S3FileStorage
 from app.infrastructure.security import BcryptHasher, FernetCipher, HmacSigner, JwtTokenService
 from app.infrastructure.telegram.client import ClientFactory
 from app.infrastructure.telegram.connector import TelethonAuth, TelethonConnector
-from app.infrastructure.telegram.session_files import TelethonSessionFileParser
+from app.infrastructure.telegram.session_files import (
+    TelethonSessionFileBuilder,
+    TelethonSessionFileParser,
+)
 
 
 @dataclass
@@ -77,7 +80,7 @@ def build_container(settings: Settings) -> Container:
         clients=clients,
         auth=AuthService(uow, hasher, tokens, kv, policies),
         users=PanelUsers(uow, hasher),
-        accounts=Accounts(uow, clients, cipher, registry),
+        accounts=Accounts(uow, clients, cipher, registry, TelethonSessionFileBuilder()),
         login=PhoneLogin(uow, tg_auth, kv, cipher, registry, registrar, clients, policies),
         importer=SessionImport(uow, tg_auth, TelethonSessionFileParser(), registry, registrar),
         proxies=Proxies(uow, registry, SocksProxyChecker(), clients),

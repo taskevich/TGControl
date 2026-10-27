@@ -9,7 +9,7 @@ import zipfile
 from pathlib import PurePosixPath
 
 from telethon.crypto import AuthKey
-from telethon.sessions import StringSession
+from telethon.sessions import SQLiteSession, StringSession
 
 from app.application.dto import ParsedSession, ParsedUploads
 
@@ -63,6 +63,21 @@ def sqlite_session_to_string(data: bytes) -> str:
             os.remove(path)
         except OSError:
             pass
+
+
+def string_to_sqlite_session(session: str) -> bytes:
+    src = StringSession(session)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "account.session")
+        dst = SQLiteSession(path)
+        try:
+            dst.set_dc(src.dc_id, src.server_address, src.port)
+            dst.auth_key = src.auth_key
+            dst.save()
+        finally:
+            dst.close()
+        with open(path, "rb") as f:
+            return f.read()
 
 
 def string_to_telethon(s: str) -> tuple[str, dict]:
@@ -221,6 +236,18 @@ def parse_uploads(
             )
         )
     return result
+
+
+class TelethonSessionFileBuilder:
+    def build(self, session: str) -> bytes:
+        return string_to_sqlite_session(session)
+
+    def archive(self, files: list[tuple[str, bytes]]) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, data in files:
+                zf.writestr(name, data)
+        return buf.getvalue()
 
 
 class TelethonSessionFileParser:

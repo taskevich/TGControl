@@ -2,6 +2,8 @@ import os
 
 from telethon import TelegramClient, errors, types
 from telethon import utils as tg_utils
+from telethon.tl.functions.account import GetAuthorizationsRequest
+from telethon.tl.functions.auth import ResetAuthorizationsRequest
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import (
     CheckChatInviteRequest,
@@ -54,6 +56,7 @@ WRITE_FORBIDDEN = rpc_errors(
     "PeerIdInvalidError",
 )
 JOIN_REQUEST_SENT = rpc_errors("InviteRequestSentError")
+RESET_TOO_FRESH = rpc_errors("FreshResetAuthorisationForbiddenError")
 ALREADY_PARTICIPANT = rpc_errors("UserAlreadyParticipantError")
 INVITE_BAD = rpc_errors(
     "InviteHashExpiredError", "InviteHashInvalidError", "InviteHashEmptyError"
@@ -117,6 +120,20 @@ class TelethonSession:
     @translated
     async def log_out(self) -> None:
         await self.client.log_out()
+
+    @translated
+    async def reset_other_sessions(self) -> int:
+        auths = await self.client(GetAuthorizationsRequest())
+        others = sum(1 for a in auths.authorizations if not a.current)
+        if not others:
+            return 0
+        try:
+            await self.client(ResetAuthorizationsRequest())
+        except RESET_TOO_FRESH as e:
+            raise OperationSkipped(
+                "Telegram не даёт завершать другие сеансы из сессии моложе 24 часов"
+            ) from e
+        return others
 
     @translated
     async def edit_2fa(

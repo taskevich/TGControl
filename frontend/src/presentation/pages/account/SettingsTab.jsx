@@ -6,6 +6,7 @@ import {Badge, SecretValue, Spinner} from '../../components/ui.jsx'
 import ProxySelect from '../../components/ProxySelect.jsx'
 import {NEW_PASSWORD_MIN_LENGTH} from '../../../domain/accounts.js'
 import {fmtDate} from '../../../domain/format.js'
+import {saveFile} from '../../download.js'
 import {PROXY_BADGE, PROXY_STATUS, proxyLabel, proxyPayload} from '../../../domain/proxies.js'
 
 export default function SettingsTab({account, onSaved}) {
@@ -22,6 +23,8 @@ export default function SettingsTab({account, onSaved}) {
     const [busy, setBusy] = useState(false)
     const [newPassword, setNewPassword] = useState('')
     const [pwBusy, setPwBusy] = useState(false)
+    const [resetBusy, setResetBusy] = useState(false)
+    const [downloadBusy, setDownloadBusy] = useState(false)
     const set = (k) => (e) => setForm((f) => ({...f, [k]: e.target.value}))
 
     const save = async (e) => {
@@ -57,6 +60,30 @@ export default function SettingsTab({account, onSaved}) {
             toast(err.message, 'error')
         } finally {
             setPwBusy(false)
+        }
+    }
+
+    const resetSessions = async () => {
+        if (!window.confirm('Завершить все сеансы этого аккаунта в Telegram, кроме сеанса панели?')) return
+        setResetBusy(true)
+        try {
+            const res = await svc.accounts.resetSessions(account.id)
+            toast(res.detail, 'success')
+        } catch (err) {
+            toast(err.message, 'error')
+        } finally {
+            setResetBusy(false)
+        }
+    }
+
+    const downloadSession = async () => {
+        setDownloadBusy(true)
+        try {
+            saveFile(await svc.accounts.sessionFile(account.id))
+        } catch (err) {
+            toast(err.message, 'error')
+        } finally {
+            setDownloadBusy(false)
         }
     }
 
@@ -139,6 +166,20 @@ export default function SettingsTab({account, onSaved}) {
                             disabled={pwBusy || newPassword.length < NEW_PASSWORD_MIN_LENGTH}>{pwBusy ?
                         <Spinner/> : 'Установить'}</button>
                 </form>
+                <h3>Сеансы</h3>
+                <div className="muted small">
+                    Выход со всех других устройств и приложений - останется только сеанс панели. Telegram запрещает
+                    это в течение первых 24 часов после входа.
+                </div>
+                <div className="row">
+                    <button className="btn btn-ghost" onClick={resetSessions} disabled={resetBusy}>
+                        {resetBusy ? <Spinner/> : 'Завершить другие сеансы'}
+                    </button>
+                    <button className="btn btn-ghost" onClick={downloadSession} disabled={downloadBusy}
+                            title="Файл Telethon .session с именем телефон_пароль2FA.session">
+                        {downloadBusy ? <Spinner/> : 'Скачать .session'}
+                    </button>
+                </div>
                 <h3>Удаление</h3>
                 <div className="row">
                     <button className="btn btn-ghost" onClick={() => remove(false)}>Удалить из панели</button>

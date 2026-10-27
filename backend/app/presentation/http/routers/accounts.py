@@ -1,9 +1,14 @@
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from urllib.parse import quote
 
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import Response
+
+from app.application.use_cases.accounts import sessions_detail
 from app.container import Container
 from app.presentation.http import presenters
 from app.presentation.http.deps import container, current_user
 from app.presentation.http.schemas import (
+    AccountIdsIn,
     AccountOut,
     AccountUpdate,
     ImportResultItem,
@@ -11,6 +16,7 @@ from app.presentation.http.schemas import (
     LoginPasswordIn,
     LoginStartIn,
     LoginStepOut,
+    ResetSessionsOut,
     SetPasswordAllIn,
     SetPasswordIn,
     SetPasswordResult,
@@ -30,9 +36,25 @@ def _step(step) -> LoginStepOut:
     )
 
 
+def _attachment(name: str, data: bytes, media_type: str) -> Response:
+    return Response(
+        data,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.get("", response_model=list[AccountOut])
 async def list_accounts(status: str | None = None, c: Container = Depends(container)):
     return [presenters.account(v) for v in await c.accounts.all(status)]
+
+
+@router.get("/sessions/download")
+async def download_sessions(status: str | None = None, c: Container = Depends(container)):
+    return _attachment("sessions.zip", await c.accounts.session_archive(status), "application/zip")
 
 
 @router.get("/{account_id}", response_model=AccountOut)
@@ -55,6 +77,12 @@ async def delete_account(
 ):
     await c.accounts.delete(account_id, logout)
     return {"ok": True}
+
+
+@router.get("/{account_id}/session")
+async def download_session(account_id: int, c: Container = Depends(container)):
+    name, data = await c.accounts.session_file(account_id)
+    return _attachment(name, data, "application/octet-stream")
 
 
 @router.post("/{account_id}/check", response_model=AccountOut)
@@ -106,6 +134,18 @@ async def set_password(
     return presenters.account(
         await c.accounts.set_password(account_id, data.password, data.hint)
     )
+
+
+@router.post("/sessions/reset", response_model=list[SetPasswordResult])
+async def reset_sessions_all(data: AccountIdsIn, c: Container = Depends(container)):
+    results = await c.accounts.reset_sessions_many(data.account_ids)
+    return [SetPasswordResult(**vars(r)) for r in results]
+
+
+@router.post("/{account_id}/sessions/reset", response_model=ResetSessionsOut)
+async def reset_sessions(account_id: int, c: Container = Depends(container)):
+    terminated = await c.accounts.reset_sessions(account_id)
+    return ResetSessionsOut(terminated=terminated, detail=sessions_detail(terminated))
 
 
 @router.post("/import", response_model=list[ImportResultItem])
